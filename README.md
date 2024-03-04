@@ -17,3 +17,7 @@ A repo for sharing code to do common research tasks such as data cleaning, merge
 ### Data Viz 
 - Maps
 - Plots
+
+### Best Practices
+- Custom functions
+- package conflicts (r conflicted)
