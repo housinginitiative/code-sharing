@@ -15,9 +15,10 @@ output:
     toc: yes
 ---
 
-![img]("hippies coding.webp")
+![](https://raw.githubusercontent.com/housinginitiative/code-sharing/main/hippies%20coding.webp "HIPpies coding")
 
 # Introduction   
+
 This template is designed to help you share your code with others in a clear and organized way. As you use this template, please keep a few things in mind:
 
 ## Comments    
