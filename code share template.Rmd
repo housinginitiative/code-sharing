@@ -56,11 +56,20 @@ knitr::opts_chunk$set(
 	cache = TRUE
 )
 
+# Load libraries
+## mapping libraries
+library(tidyverse)
+library(sf)
+library(leaflet)
+library(ggplot2)
+
+
 ```
 
 ## Data processing  
 Use this chunk to load and process data. You may need multiple data processing chunks, depending on the complexity of your code. 
 ```{r data_processing}
+
 
 ```
 
