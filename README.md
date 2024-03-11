@@ -21,6 +21,9 @@ A repo for sharing code to do common research tasks such as data cleaning, merge
 - Maps
 - Plots
 
+### Analysis
+- Surveys
+
 ### Best Practices
 - Custom functions
 - package conflicts (r conflicted)
