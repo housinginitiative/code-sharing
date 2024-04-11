@@ -5,21 +5,26 @@ A repo for sharing code to do common research tasks such as data cleaning, merge
 
 ## Topics
 
-### Data cleaning
+### Data cleaning and validation
 - General
 - Addresses
 - Contact info
 - Creating a universe
+- Surveys
 
 ### APIs
 - Census Bureau: ACS
 - Census Bureau: TIGER shapefiles
 - Census Bureau: PUMS
 - CDC: BRFSS
+- Geocoding
 
 ### Data Viz 
 - Maps
 - Plots
+
+### Analysis
+- Surveys
 
 ### Best Practices
 - Custom functions
