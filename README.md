@@ -17,6 +17,7 @@ A repo for sharing code to do common research tasks such as data cleaning, merge
 - Census Bureau: TIGER shapefiles
 - Census Bureau: PUMS
 - CDC: BRFSS
+- HUD: CHAS
 - Geocoding
 
 ### Data Viz 
