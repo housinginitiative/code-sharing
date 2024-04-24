@@ -1,0 +1,94 @@
+---
+title: "ACS API Pull Template"
+author: "Anna Duan, Chi-Hyun Kim"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: flatly
+    toc_float: yes
+    code_folding: hide
+    number_sections: no
+    fontsize: 12pt
+  pdf_document:
+    toc: yes
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Introduction
+
+This template is for pulling data from the American Community Survey API of the US Census Bureau via the `tidycensus` package. The data is then processed and visualized using the `tidyverse`, `pander`, and `ggplot2` packages. We also use `tigris` to remove water features from the census tract geometries.
+
+```{r setup, echo = FALSE, include = FALSE}
+knitr::opts_chunk$set(
+	message = FALSE,
+	warning = FALSE,
+	cache = TRUE
+)
+# Load libraries
+## mapping libraries
+library(tidyverse)
+library(sf)
+library(pander)
+library(ggplot2)
+library(tidycensus)
+library(tigris)
+
+```
+
+## API Call
+This chunk is for pulling data from the ACS API. You will need to replace the `key` argument with your own API key. You can get an API key by registering at the [Census Bureau's website](https://api.census.gov/data/key_signup.html).
+
+```{r api_call, message=FALSE, warning=FALSE, include=FALSE}
+# Set API key
+census_api_key("7aaf667fa42073b560f4759176037374b38cb7fd", install = TRUE, overwrite = TRUE)
+
+# Load variables list
+vars <- load_variables(year = 2022,
+                       dataset = "acs5",
+                       cache = TRUE)
+
+# Pull data
+phl <- get_acs(geography = "tract", state = 42, county = 101, 
+               variables = c("B19013A_001", # medhhinc
+                             "B02001_002", # race = white
+                             "B01003_001"), # population
+              year=2022, geometry=T) %>%
+  select(NAME, variable, estimate) %>%
+  spread(variable, estimate) %>%
+  rename(medhhinc = B19013A_001,
+         white = B02001_002,
+         population = B01003_001) %>%
+  mutate(white_pct = ifelse(population > 0, 100*white/population, 0)) %>%
+  erase_water()
+
+```
+
+## Map
+In this chunk, we create a map of the data. You can customize the map by changing the arguments in the `geom_sf` function.
+
+```{r map, fig.height=8, fig.width=8, message=FALSE, warning=FALSE}
+ggplot() +
+  geom_sf(data = phl, aes(fill = white_pct, alpha = population), color = "transparent") +
+  scale_fill_distiller(name = "Percent", direction = 1, palette = "Blues") +
+  scale_alpha(range = c(0.3, 1.5), guide = "none") +
+  theme_void() +
+  labs(title = "White Population Percentage by Census Tract in Philadelphia, 2022",
+       caption = "Source: US Census Bureau, 2022 ACS") +
+  theme(legend.position = c(0.8, 0.2))
+```
+
+## Table
+
+```{r figures}
+phl %>%
+  st_drop_geometry() %>%
+  summarize(avg_medhhinc = mean(medhhinc, na.rm = TRUE),
+         avg_white_pct = mean(white_pct, na.rm = TRUE),
+         avg_population = mean(population, na.rm = TRUE)) %>%
+  pander(caption = "Summary of Philadelphia Census Tracts, 2022")
+
+```
