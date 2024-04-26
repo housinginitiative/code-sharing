@@ -1,0 +1,351 @@
+---
+title: "Using the ACS API"
+author: "Anna Duan, Chi-Hyun Kim"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: flatly
+    toc_float: yes
+    code_folding: hide
+    number_sections: no
+    fontsize: 12pt
+  pdf_document:
+    toc: yes
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, echo = FALSE, include = FALSE}
+
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  cache = TRUE,
+  echo = TRUE
+)
+
+# Load libraries
+library(tidyverse)
+library(tidycensus)
+library(tigris)
+library(sf)
+library(ggplot2)
+library(scales)
+library(gt)
+library(pander)
+
+```
+
+# Introduction
+
+This template provides sample code and analysis considerations around obtaining and working with data from the American Community Survey. We use the US Census Bureau API via the `tidycensus` package. The data are then processed and visualized using the `tidyverse`, `sf`, and `ggplot2` packages. We also use `tigris` to remove water features from the census tract geometries.
+
+⚠️ **Usage note**: *Nothing in this document is intended to be simply copied and pasted. You should read the accompanying text and linked resources to get an understanding of the context behind the code. The workflow demonstrated here will work for most uses, but it is for demonstration purposes only and every project will vary. As always, you're responsible for your own code.* ⚠️
+
+We highly recommend perusing the Tidycensus book by Kyle Walker, available [here](https://walker-data.com/census-r/index.html). It is also a very helpful reference work for understanding how to use Census data in general.
+
+For a through technical understanding, including how to calculate margins of error on derived estimates, see the Census Bureau's [Data User Guide for the ACS](https://www.census.gov/programs-surveys/acs/library/handbooks/general.html).
+
+(The scope of this document is limited to the aggregated ACS tables published by the Census Bureau. For working with ACS microdata, see [the relevant chapter in the tidycensus book](https://walker-data.com/census-r/analyzing-census-microdata.html).)
+
+# API key
+
+If you have not already, obtain a Census API key by registering at the [Census Bureau's website](https://api.census.gov/data/key_signup.html), and save it to your local REnvironment file. It is not recommended that you expose your actual API key in working code, as API keys are private information and should not be revealed to third parties.
+
+The easiest way to save your key is by running `usethis::edit_r_environ()`. It will open an editor window inside RStudio; add the line `CENSUS_API_KEY = '[YOUR API KEY]'`, replacing the relevant bit with your API key (make sure to preserve the quotes). The change will take effect after an R restart.
+
+# Preliminary considerations
+
+As with any project, before embarking on data analysis, you should ask:
+
+- What is the purpose of this project?
+- What are the questions we need to answer?
+- What is the timeframe that is relevant to the project? (E.g., 2022-2024)
+- What is the timescale that is relevant to the project? (E.g., yearly, monthly)
+- What is the geographic scope of the project? (E.g., Pennsylvania, Los Angeles County, nationwide)
+- What is the geographic scale of the project? (E.g., census tract, county, state)
+- What is the acceptable margin of error?
+
+How you answer these questions will be directly relevant to how you proceed, including in the usage of this document.
+
+## Is ACS the right data source for my project?
+
+Here are some useful heuristics to decide whether ACS is the right data source for you, and if so, which flavor of ACS is the most appropriate.
+
+ACS may be a good data source for your project if:
+
+- The question you are interested in can be informed by an ACS table (see below)
+- You are interested in data collected between about 2010 and 1-2 calendar years ago
+- You do not need data at timescales finer than yearly
+- You need data with nationwide scope
+- You need data at relatively fine geographic levels
+- You need margins of error to be relatively small and documented
+
+ACS may *not* be a good data source for your project if:
+
+- There are no ACS tables that are relevant to your question
+  - This can happen often if you need a detailed breakdown, for example the number of vehicles owned by low-income renters. If so, ACS microdata ([PUMS](https://www.census.gov/programs-surveys/acs/microdata.html)) may be a relevant source for you. [CHAS](https://www.huduser.gov/portal/datasets/cp.html) may also be a relevant source, especially if you need data at small geographic scales albeit with a significant time delay.
+- You need longer term historical data
+  - For historical timeseries, [IPUMS/NHGIS](https://www.nhgis.org/) provides harmonized historical timeseries
+- You need detailed population estimates or migration estimates
+  - `tidycensus::get_estimates()` and `tidycensus::get_flows()`, respectively, may be more relevant to you
+  
+## ACS API parameters
+  
+If ACS is a relevant data source for your project, here are some questions you need to consider before calling the API:
+
+### What timescale do I need?
+
+ACS data are released yearly, either as 1-year or 5-year files. One-year estimates are more current, but are only available for units of population size larger than 65,000 and the margins of error are larger. 
+
+Here is a summary from the Census Bureau on the [differences between the 1-year and 5-year estimates](https://www.census.gov/programs-surveys/acs/guidance/estimates.html).
+
+One-year data for year X are usually [released](https://www.census.gov/programs-surveys/acs/news/data-releases/2022/release-schedule.html) in September of year X+1. Five-year data are usually released in January of year X+2.
+
+### What timeframe do I need?
+
+If you need data from the year 2020, you will need to use 5-year data, as regular 1-year estimates were not released for 2020 due to pandemic data-collection related issues.
+
+If you are comparing multiple years, the timeframe of the data sources should be mutually exclusive: either all 1-year, or 5-year estimates that do *not* overlap.
+
+For historical comparisons, you also need to make sure that the geographic units you are analyzing did not change names or boundaries, and that the variables names or coding values also did not change. See [this section](https://walker-data.com/census-r/wrangling-census-data-with-tidyverse-tools.html#comparing-acs-estimates-over-time) in the tidycensus book for more details.
+
+### What geographies do I need?
+
+A large range of geographic levels are available via `tidycensus::get_acs()`. The full list can be consulted [here](https://walker-data.com/census-r/an-introduction-to-tidycensus.html#geography-and-variables-in-tidycensus). But note that not every geography will be available for every variable.
+
+### Do I need spatial information appended?
+
+If the data will feed into a GIS or mapping workflow, spatial geometries can be easily appended to the data by setting the `geometry` argument in `tidycensus::get_acs()` to `TRUE`. Otherwise, omit that argument from the call or set it to `FALSE` to preserve memory.
+
+### What variables do I need?
+
+This is the most complex of these questions, since the ACS includes thousands of variables. The [tidycensus book](https://walker-data.com/census-r/an-introduction-to-tidycensus.html#searching-for-variables-in-tidycensus) explains the usage of the `tidycensus::load_variables()` [function](https://walker-data.com/tidycensus/reference/load_variables.html), which can be called to fetch a full list of all ACS variables available for a particular year and dataset. 
+
+For example, if you were interested in viewing the available variables for 2022 1-year ACS Detailed Tables, you would call:
+
+```tidycensus::load_variables(year = 2022, dataset = "acs1", cache = TRUE)```
+
+It is recommended to save this call to an object so it can be manipulated as a regular dataframe. Setting `cache = TRUE` is also recommended to save on memory space.
+
+Another very helpful source is the [Census Reporter](https://censusreporter.org/topics/), which provides a searchable list of variables by topic. For example, this is the page on [housing topics](https://censusreporter.org/topics/housing/). This is a much more human-readable format, but you should look up the variable name using tidycensus directly as well to make sure you have the variable name string literally correct. 
+
+#### Important note!
+
+Never assume what variables and their response categories mean based on their names alone. Always check the ACS [subject definitions](https://www.census.gov/programs-surveys/acs/technical-documentation/code-lists.html) and the [questionnaire form](https://www.census.gov/programs-surveys/acs/about/forms-and-instructions.html) for your year(s) of analysis to make sure you understand how the Census Bureau operationalizes the variables and to make sure that the definitions, question wording, or response options do not change between years. 
+
+# Worked example
+
+Below, we walk step-by-step through the process of obtaining the ACS data, wrangling it, and mapping it.
+
+For the purposes of this example, let's focus on the percentage of extremely rent-burdened renter households in Philadelphia, at the census tract level, as of the most recent data available.
+
+## Data source consideration
+
+First, is ACS the best source for answering this question? Alternatively, we could use PUMS or CHAS data, but the former would not allow us to look at detailed geographic levels, and the latter are much less timely.
+
+## Variable selection
+
+What are the variables we would need to answer this question? We see that in 2022 the Census Bureau added a [new table](https://www.census.gov/programs-surveys/acs/technical-documentation/table-and-geography-changes/2022/5-year.html) including "number of households paying more than 50% of their income toward housing costs". Viewing the table structure on [Census Reporter](https://censusreporter.org/tables/B25140/) and [Census Bureau's data portal](https://data.census.gov/table/ACSDT1Y2022.B25140?q=B25140&g=050XX00US42101) reveals that this provides the information we need. (But note that there are a number of other housing cost burden tables in the ACS, so don't just assume that this one is the one you need.)
+
+Reading the [2022 ACS subject definitions](https://www2.census.gov/programs-surveys/acs/tech_docs/subject_definitions/2022_ACSSubjectDefinitions.pdf), we see that how the values are operationalized is also as we expect, noting that "Units for which no rent is paid
+and units occupied by households that reported no income or a net loss comprise the category “Not computed.”".
+
+We also note that the universe of this variable is "Occupied housing units". That is, the figures are at the household level, not at the individual level. This means that the denominator for calculating percentages should also be at the household level.
+
+Therefore, we take as the denominator the values in Table B25003: Tenure. We [confirm](https://censusreporter.org/tables/B25003/) that the universe is the same, "Occupied housing units".
+
+```{r Variable selection}
+
+variables <- tidycensus::load_variables(year = 2022, dataset = "acs1", cache = TRUE) %>% 
+  filter(str_detect(name, "B25140") | str_detect(name, "B25003")) %>% 
+  filter((concept == "Tenure" & 
+            label == "Estimate!!Total:!!Renter occupied") |
+           (concept == "Housing Costs as a Percentage of Household Income in the Past 12 Months" & 
+              label == "Estimate!!Total:!!Rented!!Over 50 Percent"))
+
+```
+
+Note that we filter out to the two variables that we need, out of the many that are available for these tables. Note also that we chose as the denominator all renter households, not just those with nonzero income or rent. Therefore, our definition considers anyone with zero income or zero rent as not rent burdened. 
+
+## Calling the API
+
+We apply all of the preliminary questions we've already answered to construct the API call.
+
+```{r Calling the API, include = FALSE}
+
+data_acs_raw <- 
+  get_acs(survey = "acs5",
+          year = 2022, 
+          variables = variables$name,
+          geography = "tract", 
+          state = "PA",
+          county = "Philadelphia",
+          geometry = TRUE) 
+
+```
+
+```
+data_acs_raw <- 
+  get_acs(survey = "acs5",
+          year = 2022, 
+          variables = variables$name,
+          geography = "tract", 
+          state = "PA",
+          county = "Philadelphia",
+          geometry = TRUE) 
+```
+
+Arguments used:
+
+- `survey = "acs5"` Note that this argument defaults to the 5-year data; therefore, always specify explicitly, even (especially) if you are using 5-year data.
+- `year = 2022` This is the most recent data available as of the time of writing
+- `variables = variables$name` Since we filtered out to the variables we need already, we just call the existing vector. You can, of course, supply an ad-hoc vector, though you trade off the risk of copy-paste errors. There may also be reproducibility issues if someone copies your variable names while using a different year, if the variable name changed between years.
+- `geography = "tract"` What it says on the tin
+- `state = "PA"` and `county = "Philadelphia"` These arguments are to limit the API call to within Philadelphia; otherwise we would get nationwide data which would take longer and require another step to filter out.
+- `geometry = TRUE` This appends a spatial geometry column to the data and turns the output into an `sf` object
+
+Other arguments you could use:
+
+- `output = "wide"` The default is to return a 'tidy' long dataframe, but you can specify it to return in wide format in the first place. This could be useful if you need just one row per geography regardless of how many variables you have. In fact, our example is one of these cases but here we just use the default value because that is probably more sensible for the majority of use cases.
+- `moe_level = 95` If you need margins of error to be at the 0.95 confidence level instead of the default 0.90.
+
+For more on the arguments, see the `tidycensus::get_acs()` documentation [here](https://walker-data.com/tidycensus/reference/get_acs.html).
+
+```{r}
+
+head(data_acs_raw)
+
+```
+
+## Data wrangling
+
+Now we wrangle the data to be ready for analysis and plotting.
+
+```{r Data wrangling}
+
+data_acs_clean <- data_acs_raw %>% 
+  # Select relevant columns and recast
+  select(GEOID, variable, estimate, geometry) %>% 
+  pivot_wider(names_from = "variable", values_from = "estimate") %>% 
+  # Rename variables for easier reference
+  rename(renter_households = B25003_003, 
+         severely_burdened_renter_households = B25140_012) %>% 
+  # Calculate the percentage
+  mutate(severely_burdened_renter_percentage =
+           severely_burdened_renter_households / renter_households) %>% 
+  # Adjustment to the shape geometry for better mapping
+  erase_water()
+
+head(data_acs_clean)
+
+```
+
+## Mapping
+
+Now we can create a map of the data. You can customize the map by changing the arguments in the `geom_sf` function.
+
+Note that the year and the survey (1- or 5-year ACS) are noted in the source statement, which should always be done.
+
+```{r Mapping, fig.height=8, fig.width=8}
+
+ggplot() +
+  geom_sf(data = data_acs_clean, 
+          aes(fill = severely_burdened_renter_percentage, alpha = renter_households), 
+          color = "transparent") +
+  scale_fill_distiller(direction = 1, palette = "Blues", labels = label_percent(accuracy = 1)) +
+  scale_alpha(range = c(0.3, 1.5), guide = "none") +
+  theme_void() +
+  labs(title = "Percentage of severely rent-burdened households by census tract",
+       caption = "Source: US Census Bureau, 2022 5-year ACS.\nSevere rent burden means paying more than 50% of monthly household income on gross rent.",
+       fill = "Percent") +
+  theme(legend.position = c(0.8, 0.2))
+
+```
+
+## Summary statistics
+
+There are a number of ways you could present a summary of your data; here are just two possibilities.
+
+### Histogram
+
+```{r Histogram}
+
+data_acs_clean %>% 
+  ggplot(aes(x = severely_burdened_renter_percentage)) +
+  geom_histogram(fill = "#1f2859ff") +
+  scale_x_continuous(labels = label_percent(accuracy = 1)) +
+  theme_minimal() +
+  labs(title = "Distribution of severe rent burden across Philadelphia census tracts",
+       caption = "Source: US Census Bureau, 2022 5-year ACS.\nSevere rent burden means paying more than 50% of monthly household income on gross rent.",
+       x = "Percentage of severely rent-burdened households",
+       y = "Number of tracts")
+
+```
+
+### Table
+
+```{r Table}
+
+data_acs_table <- data_acs_clean %>%
+  st_drop_geometry() %>%
+  mutate(severe_rent_burden_category =
+           case_when(severely_burdened_renter_percentage < 0.25 ~ 
+                       "Less than 25% severely rent burdened",
+                     severely_burdened_renter_percentage < 0.5 ~ 
+                       "25%-50% severely rent burdened",
+                     severely_burdened_renter_percentage < 0.75 ~ 
+                       "50%-75% severely rent burdened",
+                     severely_burdened_renter_percentage <= 1 ~ 
+                       "More than 75% severely rent burdened",
+                     .default = NA)) %>% 
+  # Note that some tracts have no renter households, which are dropped
+  filter(renter_households != 0) %>% 
+  summarize(.by = severe_rent_burden_category,
+            number_of_tracts = n()) %>% 
+  mutate(percentage_of_tracts = number_of_tracts / sum(number_of_tracts)) %>% 
+    mutate(severe_rent_burden_category =
+           fct_relevel(severe_rent_burden_category,
+                       "More than 75% severely rent burdened",
+                       "50%-75% severely rent burdened",
+                       "25%-50% severely rent burdened",
+                       "Less than 25% severely rent burdened")) %>% 
+  arrange(severe_rent_burden_category)
+
+data_acs_table %>% 
+  gt() %>% 
+  cols_label_with(fn = ~ snakecase::to_sentence_case(.)) %>% 
+  fmt_percent(columns = contains("percent"), decimals = 0) %>% 
+  fmt_number(columns = contains("number"), decimals = 0) %>% 
+  tab_style(style = cell_text(weight = "bold"), 
+            locations = cells_column_labels()) %>% 
+  tab_header(title = "Severe rent burden among Philadelphia census tracts") %>% 
+  tab_source_note(html("Source: US Census Bureau, 2022 5-year ACS.
+                       <br>
+                       Severe rent burden means paying more than 50% of monthly household income on gross rent."))
+  
+
+```
+
+# Multi-year comparisons
+
+If your analysis requires comparisons across multiple years, make sure you check for any differences between years regarding:
+
+- Geography names (including GEOIDs)
+- Geography boundaries
+- Subject definitions
+- Variable names
+
+Also make sure that you do not overlap years (e.g., don't mix the 2022 5-year with the 2021 5-year).
+
+When you call the API, do not create a separate dataframe for each year of analysis. As the number of years increases, it makes the code increasingly unreadable and creates a significant risk of copy-paste errors. Write a function instead! Once you create a function for callig a single year, use `purrr::map()` to iterate over a vector of years to get a single dataframe with all the years you need.
+
+
+
+
+
+
+
