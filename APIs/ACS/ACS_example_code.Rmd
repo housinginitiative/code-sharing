@@ -36,6 +36,7 @@ library(ggplot2)
 library(scales)
 library(gt)
 library(pander)
+library(mapview)
 
 ```
 
@@ -160,7 +161,7 @@ Therefore, we take as the denominator the values in Table B25003: Tenure. We [co
 
 ```{r Variable selection}
 
-variables <- tidycensus::load_variables(year = 2022, dataset = "acs1", cache = TRUE) %>% 
+variables <- tidycensus::load_variables(year = 2022, dataset = "acs5", cache = TRUE) %>% 
   filter(str_detect(name, "B25140") | str_detect(name, "B25003")) %>% 
   filter((concept == "Tenure" & 
             label == "Estimate!!Total:!!Renter occupied") |
@@ -341,11 +342,51 @@ If your analysis requires comparisons across multiple years, make sure you check
 
 Also make sure that you do not overlap years (e.g., don't mix the 2022 5-year with the 2021 5-year).
 
-When you call the API, do not create a separate dataframe for each year of analysis. As the number of years increases, it makes the code increasingly unreadable and creates a significant risk of copy-paste errors. Write a function instead! Once you create a function for callig a single year, use `purrr::map()` to iterate over a vector of years to get a single dataframe with all the years you need.
+When you call the API, do not create a separate dataframe for each year of analysis. As the number of years increases, it makes the code increasingly unreadable and creates a significant risk of copy-paste errors. Write a for loop instead! Once you create a function for calling a single year, use `purrr::map()` to iterate over a vector of years to get a single dataframe with all the years you need.
+
+In this example, we will compare the percentage of tenants who are severely rent burdened in Philadelphia in 2019 and 2022.
+```{r Multi-year comparisons}
+# Define a function to fetch and process data for a given year
+pull_dat <- function(yr) {
+  dat <- get_acs(
+    year = yr,
+    geography = "tract",
+    variables = c("renter_hh" = "B25003_003", 
+                  "rent_50_plus" = "B25070_010"),
+    state = "PA",
+  ) %>%
+    select(GEOID, variable, estimate) %>%
+    pivot_wider(names_from = "variable", values_from = "estimate") %>%
+    mutate(rent_50_pct = ifelse(renter_hh != 0, rent_50_plus / renter_hh, 0)) %>%
+    st_as_sf() %>%
+    mutate(year = yr)
+  
+  return(dat)
+}
+
+years <- c(2019, 2022)
+
+# Use purrr::map_dfr() to iterate over the vector of years
+dat <- map_dfr(years, pull_dat)
 
 
+dat <- get_acs(
+    year = "2022",
+    geography = "tract",
+    variables = c("renter_hh" = "B25003_003", 
+                  "rent_50_plus" = "B25070_010"),
+    state = "PA", geometry = TRUE, survey = "acs5", output = "wide") %>%
+    select(GEOID, variable, estimate) %>%
+    pivot_wider(names_from = "variable", values_from = "estimate") %>%
+    mutate(rent_50_pct = ifelse(renter_hh != 0, rent_50_plus / renter_hh, 0)) 
 
 
+```
 
+# Cross-county comparisons
 
+For analyses that require comparisons across multiple counties, you use a similar process to write a function which calls `tidycensus::get_acs` for a list of counties, and then use `purrr::map()` to iterate over a vector of counties to get a single dataframe with all the counties you need.
+
+```{r Cross-county comparisons}
+```
 
