@@ -351,14 +351,13 @@ pull_dat <- function(yr) {
   dat <- get_acs(
     year = yr,
     geography = "tract",
+    geometry = TRUE,
     variables = c("renter_hh" = "B25003_003", 
                   "rent_50_plus" = "B25070_010"),
-    state = "PA",
-  ) %>%
+    state = "PA") %>%
     select(GEOID, variable, estimate) %>%
     pivot_wider(names_from = "variable", values_from = "estimate") %>%
     mutate(rent_50_pct = ifelse(renter_hh != 0, rent_50_plus / renter_hh, 0)) %>%
-    st_as_sf() %>%
     mutate(year = yr)
   
   return(dat)
@@ -369,18 +368,26 @@ years <- c(2019, 2022)
 # Use purrr::map_dfr() to iterate over the vector of years
 dat <- map_dfr(years, pull_dat)
 
-
-dat <- get_acs(
-    year = "2022",
-    geography = "tract",
-    variables = c("renter_hh" = "B25003_003", 
-                  "rent_50_plus" = "B25070_010"),
-    state = "PA", geometry = TRUE, survey = "acs5", output = "wide") %>%
-    select(GEOID, variable, estimate) %>%
-    pivot_wider(names_from = "variable", values_from = "estimate") %>%
-    mutate(rent_50_pct = ifelse(renter_hh != 0, rent_50_plus / renter_hh, 0)) 
+# Create a table with the results
+dat %>%
+  st_drop_geometry() %>%
+  group_by(year) %>%
+  summarize(pct_burdened = mean(round(rent_50_pct*100), na.rm = TRUE)) %>%
+  pander(caption = "Percentage of severely rent-burdened tenants in Philadelphia, 2019 and 2022")
 
 
+# create a map with the results
+ggplot() +
+  geom_sf(data = dat %>% st_as_sf(), aes(fill = rent_50_pct*100), color = "transparent") +
+  facet_wrap(~year) +
+  scale_fill_distiller(palette = "YlGnBu") +
+  labs(title = "Severe rent-burden in Philadelphia",
+       caption = "Source: US Census Bureau, 2019 and 2022 5-year ACS.\nSevere rent burden means paying more than 50% of monthly household income on gross rent.",
+       fill = "Percent of tenants") +
+  theme_void() +
+  theme(legend.position = "bottom")
+
+  
 ```
 
 # Cross-county comparisons
@@ -388,5 +395,52 @@ dat <- get_acs(
 For analyses that require comparisons across multiple counties, you use a similar process to write a function which calls `tidycensus::get_acs` for a list of counties, and then use `purrr::map()` to iterate over a vector of counties to get a single dataframe with all the counties you need.
 
 ```{r Cross-county comparisons}
+# Define a function to fetch and process data for a given county
+# Note that the function takes a county name as an argument
+
+pull_dat <- function(county) {
+  dat <- get_acs(
+    year = 2022,
+    geography = "tract",
+    geometry = TRUE,
+    variables = c("renter_hh" = "B25003_003", 
+                  "rent_50_plus" = "B25070_010"),
+    state = "PA",
+    county = county) %>%
+    select(GEOID, variable, estimate) %>%
+    pivot_wider(names_from = "variable", values_from = "estimate") %>%
+    mutate(rent_50_pct = ifelse(renter_hh != 0, rent_50_plus / renter_hh, 0)) %>%
+    mutate(county = county)
+  
+  return(dat)
+}
+
+counties <- c("Philadelphia", "Montgomery", "Bucks")
+
+# Use purrr::map_dfr() to iterate over the vector of counties
+# Note that the function is called with the county name as an argument
+# The county name is then added to the dataframe
+
+dat <- map_dfr(counties, pull_dat)
+
+# Create a table with the results
+
+dat %>%
+  st_drop_geometry() %>%
+  group_by(county) %>%
+  summarize(pct_burdened = mean(round(rent_50_pct*100), na.rm = TRUE)) %>%
+  pander(caption = "Percentage of severely rent-burdened tenants in Philadelphia, Montgomery, and Bucks counties, 2022")
+
+# create a map with the results
+
+ggplot() +
+  geom_sf(data = dat %>% st_as_sf(), aes(fill = rent_50_pct*100), color = "transparent") +
+  facet_wrap(~county) +
+  scale_fill_distiller(palette = "YlGnBu") +
+  labs(title = "Severe rent-burden in Philadelphia, Montgomery, and Bucks counties",
+       caption = "Source: US Census Bureau, 2022 5-year ACS.\nSevere rent burden means paying more than 50% of monthly household income on gross rent.",
+       fill = "Percent of tenants") +
+  theme_void() +
+  theme(legend.position = "bottom")
 ```
 
